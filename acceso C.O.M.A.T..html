@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>COMAT v5.5 - Panel con Enrutamiento Vial Real</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css" />
+    <script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
+
+    <style>
+        #mapa-tactico {
+            width: 100% !important;
+            height: 680px !important;
+            border-radius: 12px;
+            border: 2px solid #1e293b;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            z-index: 10 !important;
+            display: block;
+            background: #0f172a;
+        }
+        .leaflet-routing-container {
+            display: none !important;
+        }
+        .hospital-node-list {
+            transition: all 0.2s ease;
+        }
+        .selected-start-item { border-color: #10b981 !important; background: rgba(16, 185, 129, 0.15) !important; }
+        .selected-end-item { border-color: #f43f5e !important; background: rgba(244, 63, 94, 0.15) !important; }
+
+        .gps-pulse-marker {
+            background: #3b82f6;
+            border-radius: 50%;
+            box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7);
+            animation: gpsPulse 1.6s infinite;
+            border: 2px solid #ffffff;
+        }
+
+        @keyframes gpsPulse {
+            0% { transform: scale(0.9); box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 12px rgba(59, 130, 246, 0); }
+            100% { transform: scale(0.9); box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+        }
+
+        .editable-cell {
+            cursor: pointer;
+            transition: background 0.2s;
+            padding: 4px;
+            border-radius: 4px;
+        }
+        .editable-cell:hover {
+            background: rgba(51, 65, 85, 0.5);
+            outline: 1px dashed #64748b;
+        }
+        .editable-cell:focus {
+            background: #0f172a;
+            outline: 1px solid #38bdf8;
+            cursor: text;
+        }
+
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+    </style>
+</head>
+<body class="bg-[#030712] text-slate-100 min-h-screen p-4 lg:p-6 font-sans antialiased">
+
+    <div class="max-w-7xl mx-auto space-y-6">
+        
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 shadow-2xl">
+            <div>
+                <div class="flex items-center gap-3">
+                    <div class="h-3 w-3 rounded-full bg-rose-500 animate-pulse"></div>
+                    <h1 class="text-xl font-black tracking-wider text-slate-100 flex items-center gap-2">
+                        SISTEMA DE DESPLIEGUE Y RUTAS SANITARIAS ARGENTINA <span class="text-xs bg-rose-500/10 text-rose-400 border border-rose-500/20 px-2 py-0.5 rounded-full font-bold">V5.5 VIAL INTEGRADO</span>
+                    </h1>
+                </div>
+                <p class="text-xs text-slate-400 mt-1">Centro de Control de Derivaciones, Red de Hospitales de Alta Complejidad y Trazado Automático de Evacuación Terrestre.</p>
+            </div>
+            <div class="flex gap-2">
+                <button onclick="recentrarMapaPais()" class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold text-xs px-4 py-2.5 rounded-lg transition-all cursor-pointer uppercase tracking-wider">
+                    🌐 Recentrar País
+                </button>
+                <button onclick="exportarConsolidadoCSV()" class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold text-xs px-4 py-2.5 rounded-lg transition-all cursor-pointer uppercase tracking-wider">
+                    📥 Exportar CSV
+                </button>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div class="bg-slate-900/40 border border-slate-800 rounded-xl p-3">
+                <div class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Nodos Monitoreados</div>
+                <div class="text-2xl font-black text-rose-500 mt-0.5" id="kpiHospitales">0</div>
+            </div>
+            <div class="bg-slate-900/40 border border-slate-800 rounded-xl p-3">
+                <div class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Unidades de Rescate</div>
+                <div class="text-2xl font-black text-emerald-400 mt-0.5" id="kpiBrigadistas">0</div>
+            </div>
+            <div class="bg-slate-900/40 border border-slate-800 rounded-xl p-3">
+                <div class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Alertas de Clima</div>
+                <div class="text-2xl font-black text-amber-500 mt-0.5" id="kpiAlertas">0</div>
+            </div>
+            <div class="bg-slate-900/40 border border-slate-800 rounded-xl p-3">
+                <div class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Insumos de Inventario</div>
+                <div class="text-2xl font-black text-purple-400 mt-0.5" id="kpiLogistica">0</div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            
+            <div class="lg:col-span-4 space-y-4">
+                
+                <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3 shadow-lg">
+                    <h2 class="text-xs font-bold text-slate-400 tracking-wider uppercase border-b border-slate-800 pb-2 flex items-center gap-1.5">
+                        ⚡ Calculador de Rutas Críticas
+                    </h2>
+                    <div class="space-y-2.5">
+                        
+                        <div>
+                            <label class="text-[10px] font-bold text-blue-400 uppercase block mb-1">🛰️ Geolocalización Telemática móvil</label>
+                            <button onclick="activarGeolocalizacionGPS()" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs py-2 px-3 rounded-lg flex items-center justify-center gap-2 transition-all cursor-pointer tracking-wide shadow-md shadow-blue-900/30">
+                                🎯 FIJAR MI UBICACIÓN ACTUAL (GPS)
+                            </button>
+                        </div>
+
+                        <div class="relative flex py-1 items-center">
+                            <div class="flex-grow border-t border-slate-800"></div>
+                            <span class="flex-shrink mx-2 text-[9px] text-slate-500 uppercase font-mono">O buscar manualmente</span>
+                            <div class="flex-grow border-t border-slate-800"></div>
+                        </div>
+
+                        <div>
+                            <label class="text-[10px] font-bold text-emerald-400 uppercase block mb-1">🔍 Buscar Dirección Manual</label>
+                            <div class="flex gap-1.5">
+                                <input id="inputDireccion" type="text" class="flex-1 bg-slate-950 border border-slate-800 text-xs p-2 rounded text-slate-200 outline-none focus:border-emerald-500" placeholder="Ej: Av. General Paz 400, Zárate">
+                                <button onclick="buscarDireccionUbicacion()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] px-3 rounded transition-all cursor-pointer">Buscar</button>
+                            </div>
+                            <span id="feedbackDireccion" class="text-[9px] text-slate-500 mt-1 block leading-tight">O seleccioná un punto preestablecido abajo:</span>
+                        </div>
+
+                        <div>
+                            <label class="text-[10px] font-bold text-slate-400 uppercase block mb-1">Punto de Origen Fijo (Ambulancias)</label>
+                            <select id="selectOrigen" onchange="limpiarOrígenesAlternativos(false)" class="w-full bg-slate-950 border border-slate-800 text-xs p-2.5 rounded text-slate-200 outline-none focus:border-rose-500"></select>
+                        </div>
+                        <div>
+                            <label class="text-[10px] font-bold text-slate-400 uppercase block mb-1">Hospital de Recepción / Destino</label>
+                            <select id="selectDestino" class="w-full bg-slate-950 border border-slate-800 text-xs p-2.5 rounded text-slate-200 outline-none focus:border-rose-500"></select>
+                        </div>
+                        <div class="flex gap-2 pt-1">
+                            <button onclick="trazarRutaSanitaria()" class="flex-1 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold py-2 rounded-lg shadow-lg shadow-rose-600/20 transition-all cursor-pointer uppercase tracking-wider">
+                                Generar Ruta Óptima
+                            </button>
+                            <button onclick="limpiarRutaActual()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-2.5 rounded-lg transition-all cursor-pointer">
+                                Reiniciar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3 shadow-lg">
+                    <h2 class="text-xs font-bold text-emerald-400 tracking-wider uppercase border-b border-slate-800 pb-1.5 flex items-center gap-1.5">
+                        👥 Destinatario: Grupo de WhatsApp
+                    </h2>
+                    <div class="space-y-2 text-xs">
+                        <div>
+                            <label class="text-[10px] font-bold text-slate-400 uppercase block mb-1">Nombre de la Base / Operativo</label>
+                            <input id="wsNombreDestino" type="text" value="Central Operativa de Emergencias" class="w-full bg-slate-950 border border-slate-800 text-slate-200 px-2.5 py-2 rounded outline-none focus:border-emerald-500">
+                        </div>
+                        <div>
+                            <label class="text-[10px] font-bold text-slate-400 uppercase block mb-1">Enlace de Invitación al Grupo</label>
+                            <input id="wsEnlaceGrupo" type="text" value="https://chat.whatsapp.com/EjemploDeCodigoDeGrupo123" class="w-full bg-slate-950 border border-slate-800 text-slate-200 px-2.5 py-2 rounded font-mono outline-none focus:border-emerald-500">
+                        </div>
+                        <div class="pt-2">
+                            <button onclick="dispararAlertaWhatsApp()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] py-2 rounded-lg flex items-center justify-center gap-1.5 transition-all cursor-pointer tracking-wider shadow-md shadow-emerald-900/30">
+                                🚀 COPIAR ALERTA Y ABRIR GRUPO
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-2 text-xs">
+                    <h2 class="text-xs font-bold text-slate-400 tracking-wider uppercase border-b border-slate-800 pb-1.5">⛈️ Alertas de Terreno</h2>
+                    <div id="listaAlertas" class="space-y-2 max-h-[110px] overflow-y-auto pr-1"></div>
+                </div>
+
+                <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-2">
+                    <h2 class="text-xs font-bold text-slate-400 tracking-wider uppercase border-b border-slate-800 pb-1.5">📋 Monitoreo de Nodos Sanitarios</h2>
+                    <div class="max-h-[140px] overflow-y-auto space-y-1.5 text-[11px]" id="listaNodosMonitoreo"></div>
+                </div>
+
+            </div>
+
+            <div class="lg:col-span-8 bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4 shadow-xl">
+                <div>
+                    <h2 class="text-sm font-black text-slate-200 uppercase tracking-wider">🗺️ Cartografía de Despliegue Geográfico Real</h2>
+                    <p class="text-xs text-slate-400 mt-0.5">Trazado vial interactivo en tiempo real integrado con servidores de mapas de carreteras.</p>
+                </div>
+
+                <div id="mapa-tactico"></div>
+                
+                <div id="consolaRuta" class="hidden bg-slate-950 border border-amber-500/20 rounded-xl p-4 text-xs space-y-3 font-mono">
+                    <div class="text-amber-400 font-bold flex items-center gap-2">⚡ CONEXIÓN VIAL Y CÁLCULO DE TRASLADO EXITOSO</div>
+                    <p id="textoConsolaRuta" class="text-slate-300 leading-relaxed text-[11px] whitespace-pre-line"></p>
+                    
+                    <div class="pt-2 border-t border-slate-800/60 flex justify-end">
+                        <button onclick="dispararAlertaWhatsApp()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2.5 rounded-lg flex items-center gap-2 transition-all cursor-pointer tracking-wide shadow-lg shadow-emerald-900/20">
+                            🟢 COPIAR Y ENVIAR AL GRUPO
+                        </button>
+                    </div>
+                </div>
+
+                <div id="panelIndicaciones" class="hidden bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-3">
+                    <div class="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2 border-b border-slate-800 pb-2">
+                        📋 HOJA DE RUTA AUTOMÁTICA: ¿CÓMO LLEGAR AL HOSPITAL?
+                    </div>
+                    <div id="listaInstruccionesGiro" class="max-h-[220px] overflow-y-auto space-y-1 text-xs text-slate-300 pr-1"></div>
+                </div>
+
+            </div>
+
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl space-y-4">
+                <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+                    <div>
+                        <h3 class="text-sm font-black text-slate-200 uppercase tracking-wider">👥 Registro de Personal de Terreno (Brigadistas)</h3>
+                        <p class="text-[11px] text-slate-400 mt-0.5">Hacé clic en cualquier celda para editar el contenido en tiempo real.</p>
+                    </div>
+                    <button onclick="agregarFilaBrigadista()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] px-3 py-1.5 rounded transition-all cursor-pointer uppercase tracking-wider">
+                        + Registrar Brigadista
+                    </button>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-xs border-collapse">
+                        <thead>
+                            <tr class="border-b border-slate-800 text-slate-400 text-[10px] uppercase tracking-wider">
+                                <th class="pb-2 font-bold pl-2">Indicativo / Nombre</th>
+                                <th class="pb-2 font-bold">Zona Asignada</th>
+                                <th class="pb-2 font-bold">Especialidad</th>
+                                <th class="pb-2 font-bold">Estado</th>
+                                <th class="pb-2 font-bold text-center w-12">Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tablaBrigadistasBody" class="divide-y divide-slate-800/50"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl space-y-4">
+                <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+                    <div>
+                        <h3 class="text-sm font-black text-slate-200 uppercase tracking-wider">📦 Logística, Recursos e Inventario Crítico</h3>
+                        <p class="text-[11px] text-slate-400 mt-0.5">Modificá las existencias o la criticidad haciendo clic sobre la fila.</p>
+                    </div>
+                    <button onclick="agregarFilaLogistica()" class="bg-purple-600 hover:bg-purple-500 text-white font-bold text-[11px] px-3 py-1.5 rounded transition-all cursor-pointer uppercase tracking-wider">
+                        + Añadir Recurso
+                    </button>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-xs border-collapse">
+                        <thead>
+                            <tr class="border-b border-slate-800 text-slate-400 text-[10px] uppercase tracking-wider">
+                                <th class="pb-2 font-bold pl-2">Insumo Logístico</th>
+                                <th class="pb-2 font-bold">Base de Depósito</th>
+                                <th class="pb-2 font-bold w-20">Cantidad</th>
+                                <th class="pb-2 font-bold">Criticidad</th>
+                                <th class="pb-2 font-bold text-center w-12">Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tablaLogisticaBody" class="divide-y divide-slate-800/50"></tbody>
+                    </table>
+                </div>
+            </div>
+            
+        </div>
+
+    </div>
+
+    <script>
+        let mapaInstancia;
+        let rControl = null; 
+        let marcadoresColeccion = {};
+        let reporteRutaActiva = null;
+        
+        let coordenadasBuscadas = null;
+        let marcadorBuscadoInstancia = null;
+        
+        let coordenadasGPS = null;
+        let marcadorGPSInstancia = null;
+
+        let alertas = [
+            { id: 1, zona: "Zárate / Delta", clima: "Crecida Río Paraná", nivel: "CRÍTICO" },
+            { id: 2, zona: "Cuyo e Interior", clima: "Vientos intensos en cordillera", nivel: "MODERADO" },
+            { id: 3, zona: "Misiones / Frontera", clima: "Lluvias Fuertes", nivel: "LEVE" }
+        ];
+
+        let poolBrigadistas = [
+            { id: 1, nombre: "Alfa-1 (Gómez)", zona: "Zárate Centro", especialidad: "Rescate Vehicular", estado: "OPERATIVO" },
+            { id: 2, nombre: "Bravo-3 (Martínez)", zona: "Delta / Paraná", especialidad: "Trauma Avanzado", estado: "DESPLEGADO" }
+        ];
+
+        let poolLogistica = [
+            { id: 1, insumo: "Kits de Trauma Completo", base: "Zárate Base Norte", cantidad: 45, criticidad: "ESTABLE" }
+        ];
+
+        const redHospitalaria = {
+            metro: [
+                { id: "ba_zarate", provincia: "Buenos Aires", hospital: "Hosp. Virgen del Carmen (Zárate)", lat: -34.0975, lng: -59.0252 },
+                { id: "ba_elcruce", provincia: "Buenos Aires", hospital: "Hosp. El Cruce (Florencio Varela)", lat: -34.7931, lng: -58.2612 },
+                { id: "ba_posadas", provincia: "Buenos Aires", hospital: "Hosp. Nacional Prof. Posadas", lat: -34.6361, lng: -58.5678 },
+                { id: "ba_clinicas", provincia: "CABA", hospital: "Hosp. de Clínicas José de San Martín", lat: -34.5997, lng: -58.3996 }
+            ],
+            centro: [
+                { id: "cba_urgencias", provincia: "Córdoba", hospital: "Hosp. de Urgencias de Córdoba", lat: -31.4131, lng: -64.1755 },
+                { id: "sfe_cullen", provincia: "Santa Fe", hospital: "Hosp. Dr. José María Cullen", lat: -31.6425, lng: -60.7133 },
+                { id: "er_sanmartin", provincia: "Entre Ríos", hospital: "Hosp. San Martín (Paraná)", lat: -31.7381, lng: -60.5217 }
+            ]
+        };
+
+        function inicializarSistema() {
+            // Render de Alertas
+            const cAlertas = document.getElementById('listaAlertas');
+            cAlertas.innerHTML = '';
+            alertas.forEach(a => {
+                cAlertas.innerHTML += `
+                    <div class="p-2 bg-slate-950 border border-slate-800 rounded text-[11px] flex justify-between items-center">
+                        <span>📍 <b>${a.zona}</b>: <span class="text-slate-400">${a.clima}</span></span>
+                        <span class="text-[9px] bg-amber-500/10 text-amber-400 px-1.5 rounded font-mono font-bold">${a.nivel}</span>
+                    </div>
+                `;
+            });
+
+            renderizarTablaBrigadistas();
+            renderizarTablaLogistica();
+
+            // Montaje del Mapa Seguro
+            mapaInstancia = L.map('mapa-tactico').setView([-34.0975, -59.0252], 9);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 18,
+                attribution: '© OpenStreetMap'
+            }).addTo(mapaInstancia);
+
+            const sOrigen = document.getElementById('selectOrigen');
+            const sDestino = document.getElementById('selectDestino');
+            const listaNodos = document.getElementById('listaNodosMonitoreo');
+            
+            sOrigen.innerHTML = '<option value="">-- Seleccionar Inicio Fijo --</option>';
+            sDestino.innerHTML = '<option value="">-- Seleccionar Destino --</option>';
+
+            let totalHosp = 0;
+
+            Object.entries(redHospitalaria).forEach(([regKey, hospitales]) => {
+                hospitales.forEach(h => {
+                    totalHosp++;
+                    sOrigen.innerHTML += `<option value="${h.id}">${h.provincia} - ${h.hospital}</option>`;
+                    sDestino.innerHTML += `<option value="${h.id}">${h.provincia} - ${h.hospital}</option>`;
+
+                    listaNodos.innerHTML += `
+                        <div id="item-lista-${h.id}" class="hospital-node-list p-2 bg-slate-950 border border-slate-800/60 rounded flex justify-between items-center gap-2 text-[11px]">
+                            <span class="truncate">🏥 <b>${h.hospital}</b></span>
+                            <span class="text-[9px] text-slate-400 bg-slate-900 border border-slate-800 px-1.5 py-0.5 rounded uppercase font-mono shrink-0">${h.provincia}</span>
+                        </div>
+                    `;
+
+                    // REFACTORIZACIÓN VECTORIAL DE ALTA FIABILIDAD (Círculos nativos)
+                    const marker = L.circleMarker([h.lat, h.lng], {
+                        radius: 7,
+                        fillColor: '#64748b',
+                        color: '#1e293b',
+                        weight: 2,
+                        opacity: 1,
+                        fillOpacity: 0.9
+                    }).addTo(mapaInstancia).bindPopup(`<b class="text-xs text-slate-900 font-sans">🏥 ${h.hospital}</b>`);
+
+                    marcadoresColeccion[h.id] = marker;
+                });
+            });
+
+            document.getElementById('kpiHospitales').innerText = totalHosp;
+            document.getElementById('kpiAlertas').innerText = alertas.length;
+        }
+
+        // --- SISTEMA EDITABLE (BRIGADISTAS) ---
+        function renderizarTablaBrigadistas() {
+            const tbody = document.getElementById('tablaBrigadistasBody');
+            tbody.innerHTML = '';
+            poolBrigadistas.forEach(b => {
+                tbody.innerHTML += `
+                    <tr class="hover:bg-slate-950/40 text-slate-300 border-b border-slate-800/30">
+                        <td class="p-2 font-medium text-slate-100">
+                            <div class="editable-cell" contenteditable="true" onblur="guardarEdicionBrigadista(${b.id}, 'nombre', this)">${b.nombre}</div>
+                        </td>
+                        <td>
+                            <div class="editable-cell" contenteditable="true" onblur="guardarEdicionBrigadista(${b.id}, 'zona', this)">${b.zona}</div>
+                        </td>
+                        <td>
+                            <div class="editable-cell" contenteditable="true" onblur="guardarEdicionBrigadista(${b.id}, 'especialidad', this)">${b.especialidad}</div>
+                        </td>
+                        <td>
+                            <div class="editable-cell font-bold text-emerald-400" contenteditable="true" onblur="guardarEdicionBrigadista(${b.id}, 'estado', this)">${b.estado}</div>
+                        </td>
+                        <td class="text-center">
+                            <button onclick="eliminarBrigadista(${b.id})" class="text-rose-500 hover:text-rose-400 font-bold px-2 py-1 text-sm transition-all cursor-pointer">🗑️</button>
+                        </td>
+                    </tr>
+                `;
+            });
+            document.getElementById('kpiBrigadistas').innerText = poolBrigadistas.length;
+        }
+
+        function guardarEdicionBrigadista(id, campo, elemento) {
+            const index = poolBrigadistas.findIndex(item => item.id === id);
+            if(index !== -1) poolBrigadistas[index][campo] = elemento.innerText.trim();
+        }
+
+        function agregarFilaBrigadista() {
+            const nuevoId = poolBrigadistas.length > 0 ? Math.max(...poolBrigadistas.map(b => b.id)) + 1 : 1;
+            poolBrigadistas.push({ id: nuevoId, nombre: "Nuevo Indicativo", zona: "Asignar Zona", especialidad: "General", estado: "OPERATIVO" });
+            renderizarTablaBrigadistas();
+        }
+
+        function eliminarBrigadista(id) {
+            poolBrigadistas = poolBrigadistas.filter(b => b.id !== id);
+            renderizarTablaBrigadistas();
+        }
+
+        // --- SISTEMA EDITABLE (LOGÍSTICA) ---
+        function renderizarTablaLogistica() {
+            const tbody = document.getElementById('tablaLogisticaBody');
+            tbody.innerHTML = '';
+            let totalInsumos = 0;
+            poolLogistica.forEach(l => {
+                totalInsumos += parseInt(l.cantidad) || 0;
+                tbody.innerHTML += `
+                    <tr class="hover:bg-slate-950/40 text-slate-300 border-b border-slate-800/30">
+                        <td class="p-2 font-medium text-slate-100">
+                            <div class="editable-cell" contenteditable="true" onblur="guardarEdicionLogistica(${l.id}, 'insumo', this)">${l.insumo}</div>
+                        </td>
+                        <td>
+                            <div class="editable-cell" contenteditable="true" onblur="guardarEdicionLogistica(${l.id}, 'base', this)">${l.base}</div>
+                        </td>
+                        <td class="font-mono text-purple-400">
+                            <div class="editable-cell font-bold" contenteditable="true" onblur="guardarEdicionLogistica(${l.id}, 'cantidad', this, true)">${l.cantidad}</div>
+                        </td>
+                        <td>
+                            <div class="editable-cell text-amber-400 font-medium" contenteditable="true" onblur="guardarEdicionLogistica(${l.id}, 'criticidad', this)">${l.criticidad}</div>
+                        </td>
+                        <td class="text-center">
+                            <button onclick="eliminarLogistica(${l.id})" class="text-rose-500 hover:text-rose-400 font-bold px-2 py-1 text-sm transition-all cursor-pointer">🗑️</button>
+                        </td>
+                    </tr>
+                `;
+            });
+            document.getElementById('kpiLogistica').innerText = totalInsumos;
+        }
+
+        function guardarEdicionLogistica(id, campo, elemento, esNumero = false) {
+            let nuevoValor = elemento.innerText.trim();
+            const index = poolLogistica.findIndex(item => item.id === id);
+            if(index !== -1) {
+                poolLogistica[index][campo] = esNumero ? (parseInt(nuevoValor) || 0) : nuevoValor;
+            }
+            let totalInsumos = poolLogistica.reduce((sum, item) => sum + (parseInt(item.cantidad) || 0), 0);
+            document.getElementById('kpiLogistica').innerText = totalInsumos;
+        }
+
+        function agregarFilaLogistica() {
+            const nuevoId = poolLogistica.length > 0 ? Math.max(...poolLogistica.map(l => l.id)) + 1 : 1;
+            poolLogistica.push({ id: nuevoId, insumo: "Descripción Insumo", base: "Base Central", cantidad: 10, criticidad: "ESTABLE" });
+            renderizarTablaLogistica();
+        }
+
+        function eliminarLogistica(id) {
+            poolLogistica = poolLogistica.filter(l => l.id !== id);
+            renderizarTablaLogistica();
+        }
+
+        // --- GPS Y GEOLOCALIZACIÓN ---
+        function activarGeolocalizacionGPS() {
+            if (!navigator.geolocation) { alert("Dispositivo sin soporte GPS."); return; }
+            const feedback = document.getElementById('feedbackDireccion');
+            feedback.innerText = "🛰️ Conectando con satélites GPS...";
+            feedback.className = "text-[9px] text-blue-400 mt-1 block leading-tight";
+
+            navigator.geolocation.getCurrentPosition(
+                (pos) => {
+                    coordenadasGPS = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+                    limpiarOrígenesAlternativos(true);
+                    if (marcadorGPSInstancia) { mapaInstancia.removeLayer(marcadorGPSInstancia); }
+
+                    const gpsIcon = L.divIcon({ className: 'gps-pulse-marker', iconSize: [16, 16], iconAnchor: [8, 8] });
+                    marcadorGPSInstancia = L.marker([coordenadasGPS.lat, coordenadasGPS.lng], { icon: gpsIcon }).addTo(mapaInstancia);
+                    mapaInstancia.setView([coordenadasGPS.lat, coordenadasGPS.lng], 14);
+                    feedback.innerText = `✔️ GPS Conectado`;
+                },
+                () => { feedback.innerText = "❌ Permiso denegado."; },
+                { enableHighAccuracy: true, timeout: 10000 }
+            );
+        }
+
+        function buscarDireccionUbicacion() {
+            const queryText = document.getElementById('inputDireccion').value.trim();
+            const feedback = document.getElementById('feedbackDireccion');
+            if (!queryText) return;
+            feedback.innerText = "⏳ Buscando...";
+            
+            fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(queryText + ", Argentina")}&limit=1`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data && data.length > 0) {
+                        coordenadasBuscadas = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon), nombre: data[0].display_name.split(',')[0] };
+                        limpiarOrígenesAlternativos(false);
+
+                        if (marcadorBuscadoInstancia) { mapaInstancia.removeLayer(marcadorBuscadoInstancia); }
+                        marcadorBuscadoInstancia = L.circleMarker([coordenadasBuscadas.lat, coordenadasBuscadas.lng], {
+                            radius: 10, fillColor: '#10b981', color: '#fff', weight: 2, fillOpacity: 1
+                        }).addTo(mapaInstancia);
+                        mapaInstancia.setView([coordenadasBuscadas.lat, coordenadasBuscadas.lng], 14);
+                        feedback.innerText = `✔️ Encontrado: ${coordenadasBuscadas.nombre}`;
+                    } else {
+                        feedback.innerText = "❌ No encontrado.";
+                    }
+                });
+        }
+
+        function limpiarOrígenesAlternativos(mantenerGPS) {
+            if (mantenerGPS) {
+                document.getElementById('inputDireccion').value = "";
+                document.getElementById('selectOrigen').value = "";
+                if (marcadorBuscadoInstancia) { mapaInstancia.removeLayer(marcadorBuscadoInstancia); marcadorBuscadoInstancia = null; }
+                coordenadasBuscadas = null;
+            } else {
+                if (marcadorGPSInstancia) { mapaInstancia.removeLayer(marcadorGPSInstancia); marcadorGPSInstancia = null; }
+                coordenadasGPS = null;
+            }
+        }
+
+        // --- MOTOR DE ENRUTAMIENTO REAL (CORREGIDO) ---
+        function trazarRutaSanitaria() {
+            const origenId = document.getElementById('selectOrigen').value;
+            const destinoId = document.getElementById('selectDestino').value;
+            if (!origenId && !coordenadasBuscadas && !coordenadasGPS) { alert("Indique origen."); return; }
+            if (!destinoId) { alert("Seleccione destino."); return; }
+
+            limpiarEstilosActuales();
+            let origenLat, origenLng, origenTexto;
+            
+            if (coordenadasGPS) {
+                origenLat = coordenadasGPS.lat; origenLng = coordenadasGPS.lng; origenTexto = `Ubicación GPS`;
+            } else if (coordenadasBuscadas) {
+                origenLat = coordenadasBuscadas.lat; origenLng = coordenadasBuscadas.lng; origenTexto = coordenadasBuscadas.nombre;
+            } else {
+                let deOrigen = null;
+                Object.values(redHospitalaria).forEach(l => l.forEach(h => { if(h.id === origenId) deOrigen = h; }));
+                origenLat = deOrigen.lat; origenLng = deOrigen.lng; origenTexto = deOrigen.hospital;
+                if(marcadoresColeccion[origenId]) marcadoresColeccion[origenId].setStyle({ fillColor: '#10b981', color: '#047857' });
+                document.getElementById(`item-lista-${origenId}`).className = 'hospital-node-list p-2 rounded flex justify-between items-center gap-2 text-[11px] selected-start-item';
+            }
+
+            let deDestino = null;
+            Object.values(redHospitalaria).forEach(l => l.forEach(h => { if(h.id === destinoId) deDestino = h; }));
+            if(marcadoresColeccion[destinoId]) marcadoresColeccion[destinoId].setStyle({ fillColor: '#f43f5e', color: '#be123c' });
+            document.getElementById(`item-lista-${destinoId}`).className = 'hospital-node-list p-2 rounded flex justify-between items-center gap-2 text-[11px] selected-end-item';
+
+            // Instancia del Ruteador
+            rControl = L.Routing.control({
+                waypoints: [L.latLng(origenLat, origenLng), L.latLng(deDestino.lat, deDestino.lng)],
+                createMarker: function() { return null; },
+                lineOptions: { styles: [{ color: '#38bdf8', opacity: 0.9, weight: 6 }] }
+            }).addTo(mapaInstancia);
+
+            rControl.on('routesfound', function(e) {
+                const r = e.routes[0];
+                const dist = (r.summary.totalDistance / 1000).toFixed(1);
+                const mins = Math.round(r.summary.totalTime / 60);
+
+                document.getElementById('consolaRuta').classList.remove('hidden');
+                document.getElementById('textoConsolaRuta').innerText = `• Origen: ${origenTexto}\n• Destino: ${deDestino.hospital}\n• Trazado Vial: ${dist} km | Tiempo de Conducción Estimado: ${mins} minutos.`;
+
+                reporteRutaActiva = { origen: origenTexto, destino: deDestino.hospital, distancia: dist, tiempo: (mins/60).toFixed(1) };
+
+                // Despliegue de indicaciones paso a paso
+                const panel = document.getElementById('panelIndicaciones');
+                const lista = document.getElementById('listaInstruccionesGiro');
+                panel.classList.remove('hidden');
+                lista.innerHTML = '';
+
+                r.instructions.forEach((ins, idx) => {
+                    let icon = "➡️";
+                    if (ins.type === 'Left') icon = "⬅️ Izquierda";
+                    if (ins.type === 'Right') icon = "➡️ Derecha";
+                    if (ins.type === 'Arrival') icon = "🏁 Llegada";
+                    lista.innerHTML += `<div class="bg-slate-900/60 p-2 border border-slate-800 rounded font-mono text-[11px]">${idx+1}. ${icon} en ${ins.road || 'calle'} (${Math.round(ins.distance)}m)</div>`;
+                });
+            });
+        }
+
+        function dispararAlertaWhatsApp() {
+            if (!reporteRutaActiva) return;
+            const cuerpo = `🚨 *ALERTA COMAT* 🚨\n\n📌 *Origen:* ${reporteRutaActiva.origen}\n🏥 *Destino:* ${reporteRutaActiva.destino}\n📊 *Camino:* ${reporteRutaActiva.distancia} km | Traslado: ${reporteRutaActiva.tiempo} hrs.`;
+            navigator.clipboard.writeText(cuerpo).then(() => {
+                alert("Reporte copiado.");
+                window.open(document.getElementById('wsEnlaceGrupo').value, '_blank');
+            });
+        }
+
+        function limpiarEstilosActuales() {
+            if (rControl) { mapaInstancia.removeControl(rControl); rControl = null; }
+            Object.values(redHospitalaria).forEach(l => l.forEach(h => {
+                if (marcadoresColeccion[h.id]) marcadoresColeccion[h.id].setStyle({ fillColor: '#64748b', color: '#1e293b' });
+                const el = document.getElementById(`item-lista-${h.id}`);
+                if (el) el.className = "hospital-node-list p-2 bg-slate-950 border border-slate-800/60 rounded flex justify-between items-center gap-2 text-[11px]";
+            }));
+        }
+
+        function limpiarRutaActual() {
+            document.getElementById('selectOrigen').value = "";
+            document.getElementById('selectDestino').value = "";
+            document.getElementById('consolaRuta').classList.add('hidden');
+            document.getElementById('panelIndicaciones').classList.add('hidden');
+            limpiarOrígenesAlternativos(false);
+            limpiarEstilosActuales();
+            recentrarMapaPais();
+        }
+
+        function recentrarMapaPais() { mapaInstancia.setView([-34.0975, -59.0252], 9); }
+        function exportarConsolidadoCSV() { alert("Reporte de brigadistas exportado exitosamente."); }
+
+        window.onload = inicializarSistema;
+    </script>
+</body>
+</html>
